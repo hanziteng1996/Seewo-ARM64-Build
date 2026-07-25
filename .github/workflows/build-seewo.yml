@@ -5,8 +5,7 @@ on:
 
 jobs:
   build-arm64:
-    runs-on: windows-latest # 官方托管x64即可交叉编译arm64，windows-11-arm仅自有大机器可用
-
+    runs-on: windows-11-arm
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -15,6 +14,7 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
+          architecture: 'arm64'
 
       - name: Install Nativefier
         run: npm install -g nativefier
@@ -24,8 +24,10 @@ jobs:
         run: |
           Add-Type -AssemblyName System.Drawing
           $pngPaths = @(".\icon16.png", ".\icon32.png", ".\icon64.png")
-          foreach ($p in $pngPaths) { if (-not (Test-Path $p)) { Write-Error "缺失图标文件 $p"; exit 1 } }
           $icoPath = ".\logo.ico"
+          foreach ($p in $pngPaths) {
+              if (-not (Test-Path $p)) { throw "Missing icon source: $p" }
+          }
           $fs = New-Object System.IO.FileStream($icoPath, [System.IO.FileMode]::Create)
           $bw = New-Object System.IO.BinaryWriter($fs)
           $bw.Write([UInt16]0)
@@ -35,9 +37,12 @@ jobs:
           $offset = 6 + (16 * $pngPaths.Count)
           foreach ($path in $pngPaths) {
               $bytes = [System.IO.File]::ReadAllBytes($path)
-              $img = [System.Drawing.Image]::FromStream((New-Object System.IO.MemoryStream(,$bytes)))
-              $bw.Write([Byte]$img.Width)
-              $bw.Write([Byte]$img.Height)
+              $ms = New-Object System.IO.MemoryStream(,$bytes)
+              $img = [System.Drawing.Image]::FromStream($ms)
+              $w = if ($img.Width -ge 256) { 0 } else { $img.Width }
+              $h = if ($img.Height -ge 256) { 0 } else { $img.Height }
+              $bw.Write([Byte]$w)
+              $bw.Write([Byte]$h)
               $bw.Write([Byte]0)
               $bw.Write([Byte]0)
               $bw.Write([UInt16]1)
@@ -47,20 +52,25 @@ jobs:
               $imageData += ,$bytes
               $offset += $bytes.Length
               $img.Dispose()
+              $ms.Dispose()
           }
-          foreach ($bytes in $imageData) { $bw.Write($bytes) }
+          foreach ($bytes in $imageData) {
+              $bw.Write($bytes)
+          }
           $bw.Close()
           $fs.Close()
-          Write-Host "ICO图标合成完成"
+          Write-Host "Success: logo.ico merged!"
 
-      # Nativefier 纯单行命令，杜绝反引号换行YAML缩进错误
       - name: Execute Nativefier Package
-        run: nativefier --name "seewo-arm64" "https://enweb3.seewo.com/" --arch arm64 --platform windows --icon .\logo.ico --disable-gpu-sandbox --no-old-sandbox --widevine --electron-version 32.0.0 --internal-urls ".*" --background-color "#ffffff" --out .\build-output
+        run: |
+          nativefier --name "seewo-arm64" "https://enweb3.seewo.com/" --arch "arm64" --platform "windows" --icon ".\logo.ico" --widevine --electron-version "32.0.0" --background-color "#ffffff"
 
-      # 极简单行打包，云端Runner零语法报错
       - name: Archive Production
         shell: powershell
-        run: Compress-Archive -LiteralPath "$(Get-ChildItem .\build-output -Directory | Select-Object -First 1).FullName" -DestinationPath ".\Seewo-ARM64-Windows.zip"
+        run: |
+          $AppDir = Get-ChildItem | Where-Object { $_.PSIsContainer -and $_.Name -like "seewo-arm64*" } | Select-Object -First 1
+          if (-not $AppDir) { Write-Error "Build output folder not found!"; exit 1 }
+          Compress-Archive -Path $AppDir.FullName -DestinationPath ".\Seewo-ARM64-Windows.zip" -Force
 
       - name: Upload Build Artifact
         uses: actions/upload-artifact@v4
