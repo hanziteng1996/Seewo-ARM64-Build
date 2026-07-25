@@ -62,15 +62,24 @@ jobs:
           Write-Host "Success: logo.ico merged!"
 
       - name: Execute Nativefier Package
-        run: |
-          nativefier --name "seewo-arm64" "https://enweb3.seewo.com/" --arch "arm64" --platform "windows" --icon ".\logo.ico" --widevine --electron-version "32.0.0" --background-color "#ffffff"
+        run: nativefier --name "seewo-arm64" "https://enweb3.seewo.com/" --arch "arm64" --platform "windows" --icon ".\logo.ico" --widevine --electron-version "32.0.0" --background-color "#ffffff" --out "./dist"
 
       - name: Archive Production
         shell: powershell
         run: |
-          $AppDir = Get-ChildItem | Where-Object { $_.PSIsContainer -and $_.Name -like "seewo-arm64*" } | Select-Object -First 1
-          if (-not $AppDir) { Write-Error "Build output folder not found!"; exit 1 }
-          Compress-Archive -Path $AppDir.FullName -DestinationPath ".\Seewo-ARM64-Windows.zip" -Force
+          Write-Host "=== top-level dirs ==="
+          Get-ChildItem -Directory | ForEach-Object { Write-Host $_.Name }
+          $cand = Get-ChildItem -Directory | Where-Object { $_.Name -like "seewo*" } | Select-Object -First 1
+          if (-not $cand) { $cand = Get-ChildItem -Directory | Where-Object { $_.Name -like "*arm64*" } | Select-Object -First 1 }
+          if (-not $cand -and (Test-Path ".\dist")) { $cand = Get-ChildItem ".\dist" -Directory | Select-Object -First 1 }
+          if (-not $cand) { $cand = Get-ChildItem -Directory -Recurse -Depth 2 -ErrorAction SilentlyContinue | Where-Object { $_.Name -like "seewo*" -or $_.Name -like "*arm64*" } | Select-Object -First 1 }
+          if (-not $cand) {
+              Write-Host "=== full dir tree (depth 2) ==="
+              Get-ChildItem -Directory -Recurse -Depth 2 -ErrorAction SilentlyContinue | ForEach-Object { Write-Host $_.FullName }
+              Write-Error "Build output folder not found!"; exit 1
+          }
+          Write-Host "Compressing: $($cand.FullName)"
+          Compress-Archive -Path $cand.FullName -DestinationPath ".\Seewo-ARM64-Windows.zip" -Force
 
       - name: Upload Build Artifact
         uses: actions/upload-artifact@v4
