@@ -1,4 +1,4 @@
-name: Build Seewo Board ARM64 App with Custom Icon
+name: Build Seewo Board ARM64 App with Auto-Merged Icon
 
 on:
   workflow_dispatch:
@@ -20,13 +20,15 @@ jobs:
       - name: Install Nativefier
         run: npm install -g nativefier
 
-      # 核心新增步骤：自动从公开 CDN 抓取社区通用的蓝色/绿色微调白板图标（格式必须是标准的 Windows 多尺寸 .ico）
-      - name: Download Community Icon
+      # 核心新增：在云端全自动安装官方图像处理引擎，把你的三张图合成为标准的 Windows 复合多尺寸 ICO
+      - name: Setup ImageMagick & Merge Icons
         shell: powershell
         run: |
-          Invoke-WebRequest -Uri "https://icons8.com" -OutFile ".\seewo_community.ico"
+          choco install imagemagick --no-progress -y
+          # 使用 ImageMagick 将 16, 32, 64 三个分辨率融合成一个标准的多维复合 logo.ico
+          magick convert .\icon16.png .\icon32.png .\icon64.png .\logo.ico
 
-      # 执行云端原生构建，加入了 --icon 路径锁定图标参数
+      # 100% 本地读取刚刚合成好的完美图标进行满血构建
       - name: Execute Nativefier Package
         run: |
           nativefier `
@@ -34,7 +36,7 @@ jobs:
             "https://enweb3.seewo.com/" `
             --arch "arm64" `
             --platform "windows" `
-            --icon ".\seewo_community.ico" `
+            --icon ".\logo.ico" `
             --disable-gpu-sandbox `
             --no-old-sandbox `
             --widevine `
