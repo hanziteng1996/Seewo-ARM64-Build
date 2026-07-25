@@ -61,20 +61,14 @@ jobs:
       - name: Execute Nativefier Package
         shell: cmd
         run: |
-          nativefier --name seewo-arm64 https://enweb3.seewo.com/ --arch arm64 --platform windows --icon logo.ico --widevine --electron-version 32.0.0 --background-color #ffffff
+          nativefier --name seewo-arm64 https://enweb3.seewo.com/ --arch arm64 --platform windows --icon logo.ico --electron-version 32.0.0 --background-color #ffffff
           set RC=%ERRORLEVEL%
           echo ===== NATIVEFIER_EXIT=%RC% =====
-          cd
           echo ----- top dirs -----
           dir /ad /b
-          echo ----- top files -----
-          dir /a-d /b
           dir /s /b seewo*.exe >nul 2>nul
           if errorlevel 1 (
-            echo !!! NO seewo exe produced. nativefier self-report:
-            nativefier --version
-            echo npm global root:
-            npm root -g
+            echo !!! NO seewo exe produced.
             exit /b 1
           )
           exit /b %RC%
@@ -84,7 +78,6 @@ jobs:
         run: |
           $cand = Get-ChildItem -Directory | Where-Object { $_.Name -like "seewo*" } | Select-Object -First 1
           if (-not $cand) { $cand = Get-ChildItem -Directory | Where-Object { $_.Name -like "*arm64*" } | Select-Object -First 1 }
-          if (-not $cand -and (Test-Path ".\dist")) { $cand = Get-ChildItem ".\dist" -Directory | Select-Object -First 1 }
           if (-not $cand) { Write-Error "Build output folder not found!"; exit 1 }
           Write-Host "Compressing: $($cand.FullName)"
           Compress-Archive -Path $cand.FullName -DestinationPath ".\Seewo-ARM64-Windows.zip" -Force
