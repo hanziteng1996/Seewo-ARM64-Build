@@ -19,11 +19,11 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'          # ← 升到 22，兜底 packager 引擎要求
           architecture: 'arm64'
 
-      - name: Install dependencies (electron + packager)
-        run: npm install
+      - name: Validate package.json
+        run: npm install              # 无依赖，秒过，仅校验 package.json 合法
 
       - name: Merge Icons into logo.ico
         shell: powershell
@@ -59,7 +59,7 @@ jobs:
       - name: Package with Electron Packager (win32 arm64)
         shell: cmd
         run: |
-          npx @electron/packager . seewo-arm64 --platform=win32 --arch=arm64 --electron-version=32.0.0 --icon=logo.ico --overwrite --asar --prune=true
+          npx --yes --package=@electron/packager@latest electron-packager . seewo-arm64 --platform=win32 --arch=arm64 --electron-version=32.0.0 --icon=logo.ico --overwrite --asar --prune
           echo ===== PACKAGER_EXIT=%ERRORLEVEL% =====
           dir /ad /b
 
