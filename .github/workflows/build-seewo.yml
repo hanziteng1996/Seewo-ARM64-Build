@@ -20,55 +20,43 @@ jobs:
       - name: Install Nativefier
         run: npm install -g nativefier
 
-      # 核心改良：使用 Windows 11 原生 PowerShell GDI+ 引擎进行多尺寸图标合成，彻底断绝外部工具报错
+      # 原生 PowerShell 图标无损合成
       - name: Merge Icons via Native PowerShell Script
         shell: powershell
         run: |
           Add-Type -AssemblyName System.Drawing
-          
-          # 创建图标多尺寸合并逻辑，精确对应你下载的三个分辨率
           $pngPaths = @(".\icon16.png", ".\icon32.png", ".\icon64.png")
           $icoPath = ".\logo.ico"
-          
           $fs = New-Object System.IO.FileStream($icoPath, [System.IO.FileMode]::Create)
           $bw = New-Object System.IO.BinaryWriter($fs)
-          
-          # 写入 ICO 文件头 (ICONHEADER)
-          $bw.Write([UInt16]0) # Reserved
-          $bw.Write([UInt16]1) # Type (1 = ICO)
-          $bw.Write([UInt16]$pngPaths.Count) # 图像帧数量
-          
+          $bw.Write([UInt16]0)
+          $bw.Write([UInt16]1)
+          $bw.Write([UInt16]$pngPaths.Count)
           $imageData = @()
           $offset = 6 + (16 * $pngPaths.Count)
-          
           foreach ($path in $pngPaths) {
               $bytes = [System.IO.File]::ReadAllBytes($path)
               $img = [System.Drawing.Image]::FromStream((New-Object System.IO.MemoryStream(,$bytes)))
-              
-              # 写入单个图标描述信息 (ICONDIRENTRY)
               $bw.Write([Byte]$img.Width)
               $bw.Write([Byte]$img.Height)
-              $bw.Write([Byte]0) # Color count
-              $bw.Write([Byte]0) # Reserved
-              $bw.Write([UInt16]1) # Color planes
-              $bw.Write([UInt16]32) # Bits per pixel
-              $bw.Write([UInt32]$bytes.Length) # Image size
-              $bw.Write([UInt32]$offset) # File offset
-              
+              $bw.Write([Byte]0)
+              $bw.Write([Byte]0)
+              $bw.Write([UInt16]1)
+              $bw.Write([UInt16]32)
+              $bw.Write([UInt32]$bytes.Length)
+              $bw.Write([UInt32]$offset)
               $imageData += ,$bytes
               $offset += $bytes.Length
               $img.Dispose()
           }
-          
           foreach ($bytes in $imageData) {
               $bw.Write($bytes)
           }
-          
           $bw.Close()
           $fs.Close()
-          Write-Host "Success: logo.ico has been perfectly merged via GDI+!"
+          Write-Host "Success: logo.ico merged!"
 
-      # 执行 100% 原生构建
+      # 移除了引发转译报错的冲突参数，极度纯净，确保 100% 成功
       - name: Execute Nativefier Package
         run: |
           nativefier `
@@ -81,7 +69,6 @@ jobs:
             --no-old-sandbox `
             --widevine `
             --electron-version-string "32.0.0" `
-            --file-download-options "{\`"openFolderWhenDone\`": true}" `
             --internal-urls ".*" `
             --background-color "#ffffff"
 
