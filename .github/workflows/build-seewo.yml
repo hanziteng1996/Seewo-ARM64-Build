@@ -5,7 +5,7 @@ on:
 
 jobs:
   build-arm64:
-    runs-on: windows-11-arm
+    runs-on: windows-latest # 官方托管x64即可交叉编译arm64，windows-11-arm仅自有大机器可用
 
     steps:
       - name: Checkout repository
@@ -15,7 +15,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-          architecture: 'arm64'
 
       - name: Install Nativefier
         run: npm install -g nativefier
@@ -25,6 +24,7 @@ jobs:
         run: |
           Add-Type -AssemblyName System.Drawing
           $pngPaths = @(".\icon16.png", ".\icon32.png", ".\icon64.png")
+          foreach ($p in $pngPaths) { if (-not (Test-Path $p)) { Write-Error "缺失图标文件 $p"; exit 1 } }
           $icoPath = ".\logo.ico"
           $fs = New-Object System.IO.FileStream($icoPath, [System.IO.FileMode]::Create)
           $bw = New-Object System.IO.BinaryWriter($fs)
@@ -48,27 +48,19 @@ jobs:
               $offset += $bytes.Length
               $img.Dispose()
           }
-          foreach ($bytes in $imageData) {
-              $bw.Write($bytes)
-          }
+          foreach ($bytes in $imageData) { $bw.Write($bytes) }
           $bw.Close()
           $fs.Close()
-          Write-Host "Success: logo.ico merged!"
+          Write-Host "ICO图标合成完成"
 
+      # Nativefier 纯单行命令，杜绝反引号换行YAML缩进错误
       - name: Execute Nativefier Package
-        run: nativefier --name "seewo-arm64" "https://enweb3.seewo.com/" --arch "arm64" --platform "windows" --icon ".\logo.ico" --disable-gpu-sandbox --no-old-sandbox --widevine --electron-version "32.0.0" --internal-urls ".*" --background-color "#ffffff" --out ".\build-output"
+        run: nativefier --name "seewo-arm64" "https://enweb3.seewo.com/" --arch arm64 --platform windows --icon .\logo.ico --disable-gpu-sandbox --no-old-sandbox --widevine --electron-version 32.0.0 --internal-urls ".*" --background-color "#ffffff" --out .\build-output
 
+      # 极简单行打包，云端Runner零语法报错
       - name: Archive Production
         shell: powershell
-        run: |
-          $target = Get-ChildItem ".\build-output" -Directory | Where-Object { $_.Name -like "seewo-arm64*" } | Select-Object -First 1
-          if (-not $target) {
-            Write-Host "=== build-output 内容 ==="
-            Get-ChildItem ".\build-output" -Recurse
-            Write-Error "未找到输出目录"
-            exit 1
-          }
-          Compress-Archive -Path $target.FullName -DestinationPath ".\Seewo-ARM64-Windows.zip"
+        run: Compress-Archive -LiteralPath "$(Get-ChildItem .\build-output -Directory | Select-Object -First 1).FullName" -DestinationPath ".\Seewo-ARM64-Windows.zip"
 
       - name: Upload Build Artifact
         uses: actions/upload-artifact@v4
