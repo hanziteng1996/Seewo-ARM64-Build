@@ -20,7 +20,6 @@ jobs:
       - name: Install Nativefier
         run: npm install -g nativefier
 
-      # 原生 PowerShell 图标无损合成
       - name: Merge Icons via Native PowerShell Script
         shell: powershell
         run: |
@@ -56,28 +55,20 @@ jobs:
           $fs.Close()
           Write-Host "Success: logo.ico merged!"
 
-      # 终极改良点 1：软件名称直接用纯英文 "seewo-arm64"，彻底根除云端系统对中文的乱码转译报错
       - name: Execute Nativefier Package
-        run: |
-          nativefier `
-            --name "seewo-arm64" `
-            "https://enweb3.seewo.com/" `
-            --arch "arm64" `
-            --platform "windows" `
-            --icon ".\logo.ico" `
-            --disable-gpu-sandbox `
-            --no-old-sandbox `
-            --widevine `
-            --electron-version-string "32.0.0" `
-            --internal-urls ".*" `
-            --background-color "#ffffff"
+        run: nativefier --name "seewo-arm64" "https://enweb3.seewo.com/" --arch "arm64" --platform "windows" --icon ".\logo.ico" --disable-gpu-sandbox --no-old-sandbox --widevine --electron-version "32.0.0" --internal-urls ".*" --background-color "#ffffff" --out ".\build-output"
 
-      # 终极改良点 2：极其粗暴直接！把当前目录下生成的 seewo-arm64 开头的英文文件夹，直接原地压缩，绝不使用任何旧版 PowerShell 不支持的 `-Directory` 参数
       - name: Archive Production
         shell: powershell
         run: |
-          $AppDir = Get-ChildItem | Where-Object { $_.PSIsContainer -and $_.Name -like "seewo-arm64*" } | Select-Object -First 1
-          Compress-Archive -Path $AppDir.FullName -DestinationPath ".\Seewo-ARM64-Windows.zip"
+          $target = Get-ChildItem ".\build-output" -Directory | Where-Object { $_.Name -like "seewo-arm64*" } | Select-Object -First 1
+          if (-not $target) {
+            Write-Host "=== build-output 内容 ==="
+            Get-ChildItem ".\build-output" -Recurse
+            Write-Error "未找到输出目录"
+            exit 1
+          }
+          Compress-Archive -Path $target.FullName -DestinationPath ".\Seewo-ARM64-Windows.zip"
 
       - name: Upload Build Artifact
         uses: actions/upload-artifact@v4
