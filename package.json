@@ -4,9 +4,5 @@
   "description": "Seewo Board ARM64 desktop wrapper",
   "main": "main.js",
   "author": "seewo-arm64",
-  "license": "MIT",
-  "devDependencies": {
-    "electron": "32.0.0",
-    "@electron/packager": "^17.1.2"
-  }
+  "license": "MIT"
 }
