@@ -56,7 +56,7 @@ jobs:
           $fs.Close()
           Write-Host "Success: logo.ico merged!"
 
-      # 原生编译，强制输出到本地 dist 独立文件夹
+      # 去掉 --output 约束，让它以默认最高效的方式自由打包
       - name: Execute Nativefier Package
         run: |
           nativefier `
@@ -70,14 +70,20 @@ jobs:
             --widevine `
             --electron-version-string "32.0.0" `
             --internal-urls ".*" `
-            --background-color "#ffffff" `
-            --output ".\dist"
+            --background-color "#ffffff"
 
-      # 修正点：去掉星号，直接对 .\dist 文件夹整体执行压缩，完美兼容 PowerShell 语法
+      # 降维打击：在整个工作区内全自动扫描包含“希沃”名字的最终打包产物文件夹，完美规避路径找不到的硬伤
       - name: Archive Production
         shell: powershell
         run: |
-          Compress-Archive -Path ".\dist" -DestinationPath ".\Seewo-ARM64-Windows.zip"
+          $TargetDir = Get-ChildItem -Path "D:\a\*" -Directory -Filter "*希沃白板*" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($TargetDir) {
+              Write-Host "Found build folder at: $($TargetDir.FullName)"
+              Compress-Archive -Path $TargetDir.FullName -DestinationPath ".\Seewo-ARM64-Windows.zip"
+          } else {
+              Write-Error "Error: Build folder not found anywhere in workspace!"
+              exit 1
+          }
 
       - name: Upload Build Artifact
         uses: actions/upload-artifact@v4
