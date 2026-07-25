@@ -1,0 +1,58 @@
+name: Build Seewo Board ARM64 App
+
+# 触发条件：当你手动在 GitHub 页面点击“运行”按钮时启动
+on:
+  workflow_dispatch:
+
+jobs:
+  build-arm64:
+    # 核心：调用 GitHub 最新的原生 Windows 11 ARM64 托管服务器
+    runs-on: windows-11-arm
+
+    steps:
+      # 1. 签出当前仓库代码
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # 2. 部署 ARM64 原生 Node.js 环境
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          architecture: 'arm64' # 强制节点使用原生 ARM64 模式运行
+
+      # 3. 全局安装打包工具 nativefier
+      - name: Install Nativefier
+        run: npm install -g nativefier
+
+      # 4. 执行云端极限精简原生构建
+      - name: Execute Nativefier Package
+        run: |
+          nativefier `
+            --name "希沃白板5-ARM64稳定版" `
+            "https://enweb3.seewo.com/" `
+            --arch "arm64" `
+            --platform "windows" `
+            --disable-gpu-sandbox `
+            --no-old-sandbox `
+            --widevine `
+            --electron-version-string "32.0.0" `
+            --file-download-options "{\`"openFolderWhenDone\`": true}" `
+            --internal-urls ".*" `
+            --background-color "#ffffff"
+
+      # 5. 云端全自动打包成压缩包
+      - name: Archive Production
+        shell: powershell
+        run: |
+          # 自动寻找 nativefier 生成的打包目录并压缩
+          $DirName = Get-ChildItem -Directory -Filter "*希沃*" | Select-Object -First 1 -ExpandProperty Name
+          Compress-Archive -Path ".\$DirName" -DestinationPath ".\Seewo-ARM64-Windows.zip"
+
+      # 6. 将做好的软件作为产物（Artifact）上传到 GitHub 页面供下载
+      - name: Upload Build Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Seewo-ARM64-Desktop-App
+          path: Seewo-ARM64-Windows.zip
+          retention-days: 5 # 在云端保留 5 天
