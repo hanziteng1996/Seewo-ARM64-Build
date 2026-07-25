@@ -1,11 +1,17 @@
-name: Build Seewo Board ARM64 App with Native Icon Merge
+name: Build Seewo Board ARM64 App
 
 on:
   workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
 
 jobs:
   build-arm64:
     runs-on: windows-11-arm
+    env:
+      ELECTRON_MIRROR: https://npmmirror.com/mirrors/electron/
+      ELECTRON_BUILDER_BINARIES_MIRROR: https://npmmirror.com/mirrors/electron-builder-binaries/
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -16,10 +22,10 @@ jobs:
           node-version: '20'
           architecture: 'arm64'
 
-      - name: Install Nativefier
-        run: npm install -g nativefier
+      - name: Install dependencies (electron + packager)
+        run: npm install
 
-      - name: Merge Icons via Native PowerShell Script
+      - name: Merge Icons into logo.ico
         shell: powershell
         run: |
           Add-Type -AssemblyName System.Drawing
@@ -30,9 +36,7 @@ jobs:
           }
           $fs = New-Object System.IO.FileStream($icoPath, [System.IO.FileMode]::Create)
           $bw = New-Object System.IO.BinaryWriter($fs)
-          $bw.Write([UInt16]0)
-          $bw.Write([UInt16]1)
-          $bw.Write([UInt16]$pngPaths.Count)
+          $bw.Write([UInt16]0); $bw.Write([UInt16]1); $bw.Write([UInt16]$pngPaths.Count)
           $imageData = @()
           $offset = 6 + (16 * $pngPaths.Count)
           foreach ($path in $pngPaths) {
@@ -41,44 +45,30 @@ jobs:
               $img = [System.Drawing.Image]::FromStream($ms)
               $w = if ($img.Width -ge 256) { 0 } else { $img.Width }
               $h = if ($img.Height -ge 256) { 0 } else { $img.Height }
-              $bw.Write([Byte]$w)
-              $bw.Write([Byte]$h)
-              $bw.Write([Byte]0)
-              $bw.Write([Byte]0)
-              $bw.Write([UInt16]1)
-              $bw.Write([UInt16]32)
-              $bw.Write([UInt32]$bytes.Length)
-              $bw.Write([UInt32]$offset)
+              $bw.Write([Byte]$w); $bw.Write([Byte]$h); $bw.Write([Byte]0); $bw.Write([Byte]0)
+              $bw.Write([UInt16]1); $bw.Write([UInt16]32)
+              $bw.Write([UInt32]$bytes.Length); $bw.Write([UInt32]$offset)
               $imageData += ,$bytes
               $offset += $bytes.Length
-              $img.Dispose()
-              $ms.Dispose()
+              $img.Dispose(); $ms.Dispose()
           }
           foreach ($bytes in $imageData) { $bw.Write($bytes) }
           $bw.Close(); $fs.Close()
           Write-Host "Success: logo.ico merged!"
 
-      - name: Execute Nativefier Package
+      - name: Package with Electron Packager (win32 arm64)
         shell: cmd
         run: |
-          nativefier --name seewo-arm64 https://enweb3.seewo.com/ --arch arm64 --platform windows --icon logo.ico --electron-version 32.0.0 --background-color #ffffff
-          set RC=%ERRORLEVEL%
-          echo ===== NATIVEFIER_EXIT=%RC% =====
-          echo ----- top dirs -----
+          npx @electron/packager . seewo-arm64 --platform=win32 --arch=arm64 --electron-version=32.0.0 --icon=logo.ico --overwrite --asar --prune=true
+          echo ===== PACKAGER_EXIT=%ERRORLEVEL% =====
           dir /ad /b
-          dir /s /b seewo*.exe >nul 2>nul
-          if errorlevel 1 (
-            echo !!! NO seewo exe produced.
-            exit /b 1
-          )
-          exit /b %RC%
 
       - name: Archive Production
         shell: powershell
         run: |
-          $cand = Get-ChildItem -Directory | Where-Object { $_.Name -like "seewo*" } | Select-Object -First 1
-          if (-not $cand) { $cand = Get-ChildItem -Directory | Where-Object { $_.Name -like "*arm64*" } | Select-Object -First 1 }
-          if (-not $cand) { Write-Error "Build output folder not found!"; exit 1 }
+          $cand = Get-ChildItem -Directory | Where-Object { $_.Name -like "seewo-arm64-win32-arm64" } | Select-Object -First 1
+          if (-not $cand) { $cand = Get-ChildItem -Directory | Where-Object { $_.Name -like "seewo*arm64*" } | Select-Object -First 1 }
+          if (-not $cand) { Write-Error "Packager output folder not found!"; exit 1 }
           Write-Host "Compressing: $($cand.FullName)"
           Compress-Archive -Path $cand.FullName -DestinationPath ".\Seewo-ARM64-Windows.zip" -Force
 
@@ -88,3 +78,10 @@ jobs:
           name: Seewo-ARM64-Desktop-App
           path: Seewo-ARM64-Windows.zip
           retention-days: 5
+
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: Seewo-ARM64-Windows.zip
+          generate_release_notes: true
