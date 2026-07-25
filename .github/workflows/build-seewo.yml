@@ -19,11 +19,25 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '22'          # ← 升到 22，兜底 packager 引擎要求
+          node-version: '22'
           architecture: 'arm64'
 
       - name: Validate package.json
-        run: npm install              # 无依赖，秒过，仅校验 package.json 合法
+        run: npm install
+
+      - name: Compute build tag (auto)
+        shell: bash
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            RAW="${GITHUB_REF#refs/tags/}"
+            BUILD_TAG="${RAW#v}"
+          else
+            BUILD_TAG="$(date +%Y%m%d)-run${GITHUB_RUN_NUMBER}"
+          fi
+          SAFE_TAG="$(echo "$BUILD_TAG" | tr '.' '-' | tr -cd 'A-Za-z0-9-')"
+          echo "BUILD_TAG=$BUILD_TAG" >> "$GITHUB_ENV"
+          echo "SAFE_TAG=$SAFE_TAG"   >> "$GITHUB_ENV"
+          echo "==> BUILD_TAG=$BUILD_TAG  SAFE_TAG=$SAFE_TAG"
 
       - name: Merge Icons into logo.ico
         shell: powershell
@@ -63,25 +77,32 @@ jobs:
           echo ===== PACKAGER_EXIT=%ERRORLEVEL% =====
           dir /ad /b
 
-      - name: Archive Production
+      - name: Rename output folder & Archive (tagged names)
         shell: powershell
         run: |
-          $cand = Get-ChildItem -Directory | Where-Object { $_.Name -like "seewo-arm64-win32-arm64" } | Select-Object -First 1
-          if (-not $cand) { $cand = Get-ChildItem -Directory | Where-Object { $_.Name -like "seewo*arm64*" } | Select-Object -First 1 }
-          if (-not $cand) { Write-Error "Packager output folder not found!"; exit 1 }
-          Write-Host "Compressing: $($cand.FullName)"
-          Compress-Archive -Path $cand.FullName -DestinationPath ".\Seewo-ARM64-Windows.zip" -Force
+          $buildTag = $env:BUILD_TAG
+          $safeTag  = $env:SAFE_TAG
+          $orig = Get-ChildItem -Directory | Where-Object { $_.Name -eq "seewo-arm64-win32-arm64" } | Select-Object -First 1
+          if (-not $orig) { $orig = Get-ChildItem -Directory | Where-Object { $_.Name -like "seewo*arm64*" } | Select-Object -First 1 }
+          if (-not $orig) { Write-Error "Packager output folder not found!"; exit 1 }
+          $newName = "seewo-arm64-$safeTag-win32-arm64"
+          if ($orig.Name -ne $newName) { Rename-Item -Path $orig.FullName -NewName $newName }
+          $final = Get-Item $newName
+          $zip = "Seewo-ARM64-$buildTag-Windows.zip"
+          Write-Host "Folder = $($final.Name)"
+          Write-Host "Zip    = $zip"
+          Compress-Archive -Path $final.FullName -DestinationPath ".\$zip" -Force
 
       - name: Upload Build Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Seewo-ARM64-Desktop-App
-          path: Seewo-ARM64-Windows.zip
+          name: Seewo-ARM64-${{ env.SAFE_TAG }}
+          path: Seewo-ARM64-${{ env.BUILD_TAG }}-Windows.zip
           retention-days: 5
 
       - name: Create GitHub Release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: Seewo-ARM64-Windows.zip
+          files: Seewo-ARM64-${{ env.BUILD_TAG }}-Windows.zip
           generate_release_notes: true
