@@ -56,7 +56,7 @@ jobs:
           $fs.Close()
           Write-Host "Success: logo.ico merged!"
 
-      # 移除了引发转译报错的冲突参数，极度纯净，确保 100% 成功
+      # 新增了 --output ".\dist" 参数，强行将其关进本地独立的 dist 文件夹，防止其乱跑
       - name: Execute Nativefier Package
         run: |
           nativefier `
@@ -70,13 +70,14 @@ jobs:
             --widevine `
             --electron-version-string "32.0.0" `
             --internal-urls ".*" `
-            --background-color "#ffffff"
+            --background-color "#ffffff" `
+            --output ".\dist"
 
+      # 精准锁定 dist 目录进行压缩，彻底断绝打包进源码的问题
       - name: Archive Production
         shell: powershell
         run: |
-          $DirName = Get-ChildItem -Directory -Filter "*希沃*" | Select-Object -First 1 -ExpandProperty Name
-          Compress-Archive -Path ".\$DirName" -DestinationPath ".\Seewo-ARM64-Windows.zip"
+          Compress-Archive -Path ".\dist\*" -DestinationPath ".\Seewo-ARM64-Windows.zip"
 
       - name: Upload Build Artifact
         uses: actions/upload-artifact@v4
