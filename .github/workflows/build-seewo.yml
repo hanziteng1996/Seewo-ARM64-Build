@@ -56,11 +56,11 @@ jobs:
           $fs.Close()
           Write-Host "Success: logo.ico merged!"
 
-      # 去掉 --output 约束，让它以默认最高效的方式自由打包
+      # 终极改良点 1：软件名称直接用纯英文 "seewo-arm64"，彻底根除云端系统对中文的乱码转译报错
       - name: Execute Nativefier Package
         run: |
           nativefier `
-            --name "希沃白板5-ARM64社区版" `
+            --name "seewo-arm64" `
             "https://enweb3.seewo.com/" `
             --arch "arm64" `
             --platform "windows" `
@@ -72,18 +72,12 @@ jobs:
             --internal-urls ".*" `
             --background-color "#ffffff"
 
-      # 降维打击：在整个工作区内全自动扫描包含“希沃”名字的最终打包产物文件夹，完美规避路径找不到的硬伤
+      # 终极改良点 2：极其粗暴直接！把当前目录下生成的 seewo-arm64 开头的英文文件夹，直接原地压缩，绝不使用任何旧版 PowerShell 不支持的 `-Directory` 参数
       - name: Archive Production
         shell: powershell
         run: |
-          $TargetDir = Get-ChildItem -Path "D:\a\*" -Directory -Filter "*希沃白板*" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
-          if ($TargetDir) {
-              Write-Host "Found build folder at: $($TargetDir.FullName)"
-              Compress-Archive -Path $TargetDir.FullName -DestinationPath ".\Seewo-ARM64-Windows.zip"
-          } else {
-              Write-Error "Error: Build folder not found anywhere in workspace!"
-              exit 1
-          }
+          $AppDir = Get-ChildItem | Where-Object { $_.PSIsContainer -and $_.Name -like "seewo-arm64*" } | Select-Object -First 1
+          Compress-Archive -Path $AppDir.FullName -DestinationPath ".\Seewo-ARM64-Windows.zip"
 
       - name: Upload Build Artifact
         uses: actions/upload-artifact@v4
