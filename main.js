@@ -28,6 +28,21 @@ if (!gotLock) {
     return undefined;
   }
 
+  function createChildWindow(url) {
+    const win = new BrowserWindow({
+      width: 1280,
+      height: 800,
+      autoHideMenuBar: true,
+      webPreferences: {
+        contextIsolation: false,
+        nodeIntegration: false,
+        preload: path.join(__dirname, 'preload.js'),
+      },
+    });
+    win.loadURL(url);
+    return win;
+  }
+
   function createWindow() {
     mainWindow = new BrowserWindow({
       width: 1280,
@@ -47,8 +62,8 @@ if (!gotLock) {
     mainWindow.webContents.setWindowOpenHandler(() => ({
       action: 'allow',
       overrideBrowserWindowOptions: {
-        width: 1024,
-        height: 768,
+        width: 1280,
+        height: 800,
         autoHideMenuBar: true,
         webPreferences: {
           contextIsolation: false,
@@ -61,22 +76,13 @@ if (!gotLock) {
     mainWindow.webContents.on('will-navigate', (event, url) => {
       if (!url.startsWith(TARGET_URL)) {
         event.preventDefault();
-        const win = new BrowserWindow({
-          width: 1024,
-          height: 768,
-          autoHideMenuBar: true,
-          webPreferences: {
-            contextIsolation: false,
-            nodeIntegration: false,
-            preload: path.join(__dirname, 'preload.js'),
-          },
-        });
-        win.loadURL(url);
+        createChildWindow(url);
       }
     });
   }
 
   // ===== 希沃 Electron 桥 IPC 处理 =====
+  // sendToHost 的实现模拟 Web 降级路径的行为，只对导入/打印做特殊处理
 
   ipcMain.on('seewo:host', (event, { type, data }) => {
     const wc = event.sender;
@@ -98,16 +104,42 @@ if (!gotLock) {
           }
         });
         break;
-      case 'LOGOUT':
-        mainWindow.loadURL(TARGET_URL);
-        break;
       case 'openCourseware':
         if (data && data.id) {
-          mainWindow.loadURL(`${TARGET_URL}editing/electron?enbxId/${data.id}`);
+          createChildWindow(`${TARGET_URL}editing/web?ddtab=true#enbxId/${data.id}`);
         }
+        break;
+      case 'newCoursewareTemplate':
+        if (data && data.parentId) {
+          createChildWindow(`${TARGET_URL}courseware/newCourseware?parentId=${data.parentId}&type=web&ddtab=true`);
+        } else {
+          createChildWindow(`${TARGET_URL}courseware/newCourseware?type=web&ddtab=true`);
+        }
+        break;
+      case 'newTeachingPlanTemplate':
+        if (data) {
+          createChildWindow(`${window.teachingPlanUrl || TARGET_URL}teaching-plan/create?group_id=${data}`);
+        } else {
+          createChildWindow(`${window.teachingPlanUrl || TARGET_URL}teaching-plan/create`);
+        }
+        break;
+      case 'openTeachingPlan':
+        if (data && data.uid) {
+          createChildWindow(`${window.teachingPlanUrl || TARGET_URL}teaching-plan/edit/${data.uid}`);
+        }
+        break;
+      case 'LOGOUT':
+      case 'reLogin':
+        wc.loadURL(TARGET_URL);
         break;
       case 'openExternal':
         if (data && data.url) shell.openExternal(data.url);
+        break;
+      case 'reFreshCoursewareList':
+      case 'disableTabsHead':
+      case 'UNAUTHORIZED':
+      case 'updateTabTitle':
+      case 'updateTeachingPlan':
         break;
       default:
         break;
@@ -133,8 +165,11 @@ if (!gotLock) {
 
   ipcMain.handle('seewo:resize-window', (event, config) => {
     const win = BrowserWindow.fromWebContents(event.sender);
-    if (win && config && config.width && config.height) {
-      win.setSize(config.width, config.height);
+    if (win && config) {
+      if (config.width && config.height) win.setSize(config.width, config.height);
+      else if (config.size && config.size.width && config.size.height) {
+        win.setSize(config.size.width, config.size.height);
+      }
     }
   });
 
@@ -148,15 +183,7 @@ if (!gotLock) {
     if (win) { win.show(); win.focus(); }
   });
 
-  ipcMain.handle('seewo:memorize-window', (event) => {
-    const win = BrowserWindow.fromWebContents(event.sender);
-    if (win) {
-      try {
-        fs.writeFileSync(path.join(app.getPath('userData'), 'window-state.json'),
-          JSON.stringify(win.getBounds()));
-      } catch (e) {}
-    }
-  });
+  ipcMain.handle('seewo:memorize-window', () => {});
 
   ipcMain.handle('seewo:reset-window', (event) => {
     const win = BrowserWindow.fromWebContents(event.sender);
@@ -190,8 +217,8 @@ if (!gotLock) {
 
   ipcMain.handle('seewo:get-media-sources', () => []);
 
-  ipcMain.handle('seewo:sso-logout', () => {
-    mainWindow.loadURL(TARGET_URL);
+  ipcMain.handle('seewo:sso-logout', (event) => {
+    event.sender.loadURL(TARGET_URL);
   });
 
   ipcMain.handle('seewo:get-login-info', () => undefined);
@@ -205,12 +232,15 @@ if (!gotLock) {
         return { platform: 'win32', arch: 'arm64' };
       case 'GetFontList':
         return [];
+      case 'GetOpsInfo':
+      case 'GetSandboxInfo':
+        return {};
       default:
         return undefined;
     }
   });
 
-  ipcMain.on('seewo:ipc-send', (event, { channel, data }) => {});
+  ipcMain.on('seewo:ipc-send', () => {});
 
   // ===== 下载处理 =====
   app.whenReady().then(() => {
