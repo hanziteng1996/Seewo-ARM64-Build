@@ -1,13 +1,9 @@
-const { app, BrowserWindow, Menu, session, dialog, shell, Notification } = require('electron');
+const { app, BrowserWindow, Menu, session, dialog, shell, ipcMain } = require('electron');
 const path = require('path');
 const fs = require('fs');
 
 const TARGET_URL = 'https://enweb3.seewo.com/';
 
-// 显式启用文件系统访问 API（导入/导出可能用到 showOpenFilePicker / showSaveFilePicker）
-app.commandLine.appendSwitch('enable-features', 'FileSystemAccessAPI');
-
-// 单实例锁：防止误开多个程序
 const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) {
   app.quit();
@@ -39,27 +35,29 @@ if (!gotLock) {
       backgroundColor: '#ffffff',
       icon: resolveIcon(),
       webPreferences: {
-        contextIsolation: true,
+        contextIsolation: false,
         nodeIntegration: false,
+        preload: path.join(__dirname, 'preload.js'),
       },
     });
 
     mainWindow.loadURL(TARGET_URL);
     mainWindow.on('closed', () => { mainWindow = null; });
 
-    // 放行 window.open：导入/导出/打印预览等会 open('','_blank') 后 document.write，
-    // 必须 action:'allow' 才能让 window.open 返回可写引用（deny 会返回 null 导致页面 JS 报错无反应）
     mainWindow.webContents.setWindowOpenHandler(() => ({
       action: 'allow',
       overrideBrowserWindowOptions: {
         width: 1024,
         height: 768,
         autoHideMenuBar: true,
-        webPreferences: { contextIsolation: true, nodeIntegration: false },
+        webPreferences: {
+          contextIsolation: false,
+          nodeIntegration: false,
+          preload: path.join(__dirname, 'preload.js'),
+        },
       },
     }));
 
-    // 防止点击链接把主窗口导航到外部站点
     mainWindow.webContents.on('will-navigate', (event, url) => {
       if (!url.startsWith(TARGET_URL)) {
         event.preventDefault();
@@ -67,35 +65,159 @@ if (!gotLock) {
           width: 1024,
           height: 768,
           autoHideMenuBar: true,
-          webPreferences: { contextIsolation: true, nodeIntegration: false },
+          webPreferences: {
+            contextIsolation: false,
+            nodeIntegration: false,
+            preload: path.join(__dirname, 'preload.js'),
+          },
         });
         win.loadURL(url);
       }
     });
   }
 
-  // 下载处理：弹出"另存为"对话框，下载完成后通知并打开所在目录
+  // ===== 希沃 Electron 桥 IPC 处理 =====
+
+  ipcMain.on('seewo:host', (event, { type, data }) => {
+    const wc = event.sender;
+    switch (type) {
+      case 'OPEN_SYSTEM_PRINTING_SETTING':
+        wc.print();
+        break;
+      case 'OPEN_LOCAL_COURSEWARE':
+        dialog.showOpenDialog(mainWindow, {
+          title: '导入课件',
+          properties: ['openFile'],
+          filters: [
+            { name: '希沃课件', extensions: ['enbx'] },
+            { name: 'PPT 课件', extensions: ['pptx', 'ppt'] },
+          ],
+        }).then(({ canceled, filePaths }) => {
+          if (!canceled && filePaths[0]) {
+            wc.send('seewo:listener:OPEN_LOCAL_COURSEWARE', filePaths[0]);
+          }
+        });
+        break;
+      case 'LOGOUT':
+        mainWindow.loadURL(TARGET_URL);
+        break;
+      case 'openCourseware':
+        if (data && data.id) {
+          mainWindow.loadURL(`${TARGET_URL}editing/electron?enbxId/${data.id}`);
+        }
+        break;
+      case 'openExternal':
+        if (data && data.url) shell.openExternal(data.url);
+        break;
+      default:
+        break;
+    }
+  });
+
+  ipcMain.on('seewo:main', (event, { channel, data }) => {
+    for (const win of BrowserWindow.getAllWindows()) {
+      win.webContents.send('seewo:ipc-on:' + channel, data);
+    }
+  });
+
+  ipcMain.handle('seewo:invoke-main', (event, { channel, data }) => {
+    return undefined;
+  });
+
+  ipcMain.handle('seewo:exit', () => { app.quit(); });
+
+  ipcMain.handle('seewo:toggle-fullscreen', (event, flag) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (win) win.setFullScreen(!!flag);
+  });
+
+  ipcMain.handle('seewo:resize-window', (event, config) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (win && config && config.width && config.height) {
+      win.setSize(config.width, config.height);
+    }
+  });
+
+  ipcMain.handle('seewo:set-resizable', (event, resizable) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (win) win.setResizable(!!resizable);
+  });
+
+  ipcMain.handle('seewo:show-window', (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (win) { win.show(); win.focus(); }
+  });
+
+  ipcMain.handle('seewo:memorize-window', (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (win) {
+      try {
+        fs.writeFileSync(path.join(app.getPath('userData'), 'window-state.json'),
+          JSON.stringify(win.getBounds()));
+      } catch (e) {}
+    }
+  });
+
+  ipcMain.handle('seewo:reset-window', (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (win) win.setSize(1280, 800);
+  });
+
+  ipcMain.handle('seewo:open-external', (event, url) => {
+    if (url) shell.openExternal(url);
+  });
+
+  ipcMain.handle('seewo:handle-get-file', (event, filePath) => {
+    if (!filePath) return undefined;
+    try {
+      return fs.readFileSync(filePath).toString('base64');
+    } catch (e) {
+      return undefined;
+    }
+  });
+
+  ipcMain.handle('seewo:write-file', (event, data) => {
+    if (!data || !data.path) return false;
+    try {
+      fs.writeFileSync(data.path, data.content || '');
+      return true;
+    } catch (e) {
+      return false;
+    }
+  });
+
+  ipcMain.handle('seewo:cancel-download', () => true);
+
+  ipcMain.handle('seewo:get-media-sources', () => []);
+
+  ipcMain.handle('seewo:sso-logout', () => {
+    mainWindow.loadURL(TARGET_URL);
+  });
+
+  ipcMain.handle('seewo:get-login-info', () => undefined);
+  ipcMain.handle('seewo:get-login-info-by-uid', () => undefined);
+
+  ipcMain.handle('seewo:ipc-request', (event, { channel, data }) => {
+    switch (channel) {
+      case 'GetIsInDisplayBoardMode':
+        return false;
+      case 'GetSystemInfo':
+        return { platform: 'win32', arch: 'arm64' };
+      case 'GetFontList':
+        return [];
+      default:
+        return undefined;
+    }
+  });
+
+  ipcMain.on('seewo:ipc-send', (event, { channel, data }) => {});
+
+  // ===== 下载处理 =====
   app.whenReady().then(() => {
-    // 放行全部网页权限请求（文件系统访问/下载/剪贴板等），
-    // Electron 默认拒绝会导致导入/导出/打印等功能静默失败、点击无反应
-    session.defaultSession.setPermissionRequestHandler((wc, permission, callback) => callback(true));
-    session.defaultSession.setPermissionCheckHandler(() => true);
-
-    // 记录渲染进程 console 日志（含错误）到 userData/console.log，便于定位按钮无反应问题
-    app.on('browser-window-created', (event, win) => {
-      win.webContents.on('console-message', (e, level, message, line, sourceId) => {
-        try {
-          const logPath = path.join(app.getPath('userData'), 'console.log');
-          const ts = new Date().toISOString();
-          fs.appendFileSync(logPath, `[${ts}] level=${level} ${sourceId}:${line} ${message}\n`);
-        } catch (err) {}
-      });
-    });
-
     session.defaultSession.on('will-download', (event, item) => {
       const filename = item.getFilename();
       const defaultPath = path.join(app.getPath('downloads'), filename);
-      dialog.showSaveDialog({
+      dialog.showSaveDialog(mainWindow, {
         title: '保存下载',
         defaultPath,
       }).then(({ canceled, filePath }) => {
@@ -106,18 +228,13 @@ if (!gotLock) {
         item.setSavePath(filePath);
         item.once('done', (e, state) => {
           if (state === 'completed') {
-            if (Notification.isSupported()) {
-              new Notification({ title: '下载完成', body: filename }).show();
-            }
             shell.showItemInFolder(filePath);
           }
         });
       });
     });
-  });
 
-  app.whenReady().then(() => {
-    Menu.setApplicationMenu(null);   // ← 去菜单，就这一行
+    Menu.setApplicationMenu(null);
     createWindow();
   });
 
