@@ -9,6 +9,21 @@ if (!gotLock) {
   app.quit();
 } else {
   let mainWindow = null;
+  let pendingExportPath = null;
+  let pendingExportTimer = null;
+
+  function setPendingExportPath(filePath) {
+    pendingExportPath = filePath;
+    if (pendingExportTimer) clearTimeout(pendingExportTimer);
+    pendingExportTimer = setTimeout(() => { pendingExportPath = null; }, 60000);
+  }
+
+  function getAndClearPendingExportPath() {
+    const p = pendingExportPath;
+    pendingExportPath = null;
+    if (pendingExportTimer) { clearTimeout(pendingExportTimer); pendingExportTimer = null; }
+    return p;
+  }
 
   app.on('second-instance', () => {
     if (mainWindow) {
@@ -82,7 +97,6 @@ if (!gotLock) {
   }
 
   // ===== 希沃 Electron 桥 IPC 处理 =====
-  // sendToHost 的实现模拟 Web 降级路径的行为，只对导入/打印做特殊处理
 
   ipcMain.on('seewo:host', (event, { type, data }) => {
     const wc = event.sender;
@@ -118,14 +132,14 @@ if (!gotLock) {
         break;
       case 'newTeachingPlanTemplate':
         if (data) {
-          createChildWindow(`${window.teachingPlanUrl || TARGET_URL}teaching-plan/create?group_id=${data}`);
+          createChildWindow(`${TARGET_URL}teaching-plan/create?group_id=${data}`);
         } else {
-          createChildWindow(`${window.teachingPlanUrl || TARGET_URL}teaching-plan/create`);
+          createChildWindow(`${TARGET_URL}teaching-plan/create`);
         }
         break;
       case 'openTeachingPlan':
         if (data && data.uid) {
-          createChildWindow(`${window.teachingPlanUrl || TARGET_URL}teaching-plan/edit/${data.uid}`);
+          createChildWindow(`${TARGET_URL}teaching-plan/edit/${data.uid}`);
         }
         break;
       case 'LOGOUT':
@@ -140,6 +154,10 @@ if (!gotLock) {
       case 'UNAUTHORIZED':
       case 'updateTabTitle':
       case 'updateTeachingPlan':
+      case 'webview::click':
+      case 'editingStatus':
+      case 'goToHomePage':
+      case 'ACTIVATE':
         break;
       default:
         break;
@@ -147,13 +165,63 @@ if (!gotLock) {
   });
 
   ipcMain.on('seewo:main', (event, { channel, data }) => {
-    for (const win of BrowserWindow.getAllWindows()) {
-      win.webContents.send('seewo:ipc-on:' + channel, data);
+    switch (channel) {
+      case 'updateSavePathMap':
+        if (data && data.savePath) {
+          setPendingExportPath(data.savePath);
+        }
+        break;
+      default:
+        for (const win of BrowserWindow.getAllWindows()) {
+          win.webContents.send('seewo:ipc-on:' + channel, data);
+        }
+        break;
     }
   });
 
-  ipcMain.handle('seewo:invoke-main', (event, { channel, data }) => {
-    return undefined;
+  ipcMain.handle('seewo:invoke-main', async (event, { channel, data }) => {
+    switch (channel) {
+      case 'openEditingExportDialog': {
+        const filename = data || 'courseware';
+        const { canceled, filePath } = await dialog.showSaveDialog(mainWindow, {
+          title: '导出课件',
+          defaultPath: path.join(app.getPath('downloads'), filename),
+          filters: [
+            { name: '希沃课件 (.enbx)', extensions: ['enbx'] },
+            { name: 'PowerPoint (.pptx)', extensions: ['pptx'] },
+            { name: 'PDF (.pdf)', extensions: ['pdf'] },
+            { name: '图片 (.png)', extensions: ['png'] },
+          ],
+        });
+        if (canceled || !filePath) return undefined;
+        setPendingExportPath(filePath);
+        return filePath;
+      }
+      case 'saveBase64Img': {
+        if (!data || !data.savePath || !data.base64String) return false;
+        try {
+          const dir = path.dirname(data.savePath);
+          if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+          const buffer = Buffer.from(data.base64String, 'base64');
+          fs.writeFileSync(data.savePath, buffer);
+          return true;
+        } catch (e) {
+          console.error('saveBase64Img error:', e);
+          return false;
+        }
+      }
+      case 'GetIsInDisplayBoardMode':
+        return false;
+      case 'GetSystemInfo':
+        return { platform: 'win32', arch: 'arm64' };
+      case 'GetFontList':
+        return [];
+      case 'GetOpsInfo':
+      case 'GetSandboxInfo':
+        return {};
+      default:
+        return undefined;
+    }
   });
 
   ipcMain.handle('seewo:exit', () => { app.quit(); });
@@ -203,12 +271,43 @@ if (!gotLock) {
     }
   });
 
-  ipcMain.handle('seewo:write-file', (event, data) => {
-    if (!data || !data.path) return false;
+  ipcMain.handle('seewo:write-file', (event, filePath, content, isBinary) => {
+    if (!filePath) return false;
     try {
-      fs.writeFileSync(data.path, data.content || '');
+      const dir = path.dirname(filePath);
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+      if (isBinary && content) {
+        const buffer = Buffer.isBuffer(content) ? content : Buffer.from(content);
+        fs.writeFileSync(filePath, buffer);
+      } else {
+        fs.writeFileSync(filePath, content || '');
+      }
       return true;
     } catch (e) {
+      console.error('write-file error:', e);
+      return false;
+    }
+  });
+
+  ipcMain.handle('seewo:save-blob', async (event, { filename, data }) => {
+    let filePath = getAndClearPendingExportPath();
+    if (!filePath) {
+      const { canceled, filePath: selectedPath } = await dialog.showSaveDialog(mainWindow, {
+        title: '保存文件',
+        defaultPath: path.join(app.getPath('downloads'), filename),
+      });
+      if (canceled || !selectedPath) return false;
+      filePath = selectedPath;
+    }
+    try {
+      const dir = path.dirname(filePath);
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+      const buffer = Buffer.isBuffer(data) ? data : Buffer.from(data);
+      fs.writeFileSync(filePath, buffer);
+      shell.showItemInFolder(filePath);
+      return true;
+    } catch (e) {
+      console.error('save-blob error:', e);
       return false;
     }
   });
@@ -224,28 +323,22 @@ if (!gotLock) {
   ipcMain.handle('seewo:get-login-info', () => undefined);
   ipcMain.handle('seewo:get-login-info-by-uid', () => undefined);
 
-  ipcMain.handle('seewo:ipc-request', (event, { channel, data }) => {
-    switch (channel) {
-      case 'GetIsInDisplayBoardMode':
-        return false;
-      case 'GetSystemInfo':
-        return { platform: 'win32', arch: 'arm64' };
-      case 'GetFontList':
-        return [];
-      case 'GetOpsInfo':
-      case 'GetSandboxInfo':
-        return {};
-      default:
-        return undefined;
-    }
-  });
-
   ipcMain.on('seewo:ipc-send', () => {});
 
-  // ===== 下载处理 =====
+  // ===== 下载处理（非 blob 下载的 fallback） =====
   app.whenReady().then(() => {
     session.defaultSession.on('will-download', (event, item) => {
       const filename = item.getFilename();
+      const pendingPath = getAndClearPendingExportPath();
+      if (pendingPath) {
+        item.setSavePath(pendingPath);
+        item.once('done', (e, state) => {
+          if (state === 'completed') {
+            shell.showItemInFolder(pendingPath);
+          }
+        });
+        return;
+      }
       const defaultPath = path.join(app.getPath('downloads'), filename);
       dialog.showSaveDialog(mainWindow, {
         title: '保存下载',
