@@ -4,6 +4,9 @@ const fs = require('fs');
 
 const TARGET_URL = 'https://enweb3.seewo.com/';
 
+// 显式启用文件系统访问 API（导入/导出可能用到 showOpenFilePicker / showSaveFilePicker）
+app.commandLine.appendSwitch('enable-features', 'FileSystemAccessAPI');
+
 // 单实例锁：防止误开多个程序
 const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) {
@@ -73,6 +76,22 @@ if (!gotLock) {
 
   // 下载处理：弹出"另存为"对话框，下载完成后通知并打开所在目录
   app.whenReady().then(() => {
+    // 放行全部网页权限请求（文件系统访问/下载/剪贴板等），
+    // Electron 默认拒绝会导致导入/导出/打印等功能静默失败、点击无反应
+    session.defaultSession.setPermissionRequestHandler((wc, permission, callback) => callback(true));
+    session.defaultSession.setPermissionCheckHandler(() => true);
+
+    // 记录渲染进程 console 日志（含错误）到 userData/console.log，便于定位按钮无反应问题
+    app.on('browser-window-created', (event, win) => {
+      win.webContents.on('console-message', (e, level, message, line, sourceId) => {
+        try {
+          const logPath = path.join(app.getPath('userData'), 'console.log');
+          const ts = new Date().toISOString();
+          fs.appendFileSync(logPath, `[${ts}] level=${level} ${sourceId}:${line} ${message}\n`);
+        } catch (err) {}
+      });
+    });
+
     session.defaultSession.on('will-download', (event, item) => {
       const filename = item.getFilename();
       const defaultPath = path.join(app.getPath('downloads'), filename);
