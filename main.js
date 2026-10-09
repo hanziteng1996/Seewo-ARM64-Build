@@ -44,14 +44,30 @@ if (!gotLock) {
     mainWindow.loadURL(TARGET_URL);
     mainWindow.on('closed', () => { mainWindow = null; });
 
-    // 放行 window.open（打印/导出预览等可能用到新窗口）
-    mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-      if (/^https?:\/\//.test(url)) {
-        const win = new BrowserWindow({ width: 1024, height: 768, autoHideMenuBar: true });
+    // 放行 window.open：导入/导出/打印预览等会 open('','_blank') 后 document.write，
+    // 必须 action:'allow' 才能让 window.open 返回可写引用（deny 会返回 null 导致页面 JS 报错无反应）
+    mainWindow.webContents.setWindowOpenHandler(() => ({
+      action: 'allow',
+      overrideBrowserWindowOptions: {
+        width: 1024,
+        height: 768,
+        autoHideMenuBar: true,
+        webPreferences: { contextIsolation: true, nodeIntegration: false },
+      },
+    }));
+
+    // 防止点击链接把主窗口导航到外部站点
+    mainWindow.webContents.on('will-navigate', (event, url) => {
+      if (!url.startsWith(TARGET_URL)) {
+        event.preventDefault();
+        const win = new BrowserWindow({
+          width: 1024,
+          height: 768,
+          autoHideMenuBar: true,
+          webPreferences: { contextIsolation: true, nodeIntegration: false },
+        });
         win.loadURL(url);
-        return { action: 'deny' };
       }
-      return { action: 'deny' };
     });
   }
 
