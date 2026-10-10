@@ -42,7 +42,7 @@ if (!gotLock) {
       height: 800,
       autoHideMenuBar: true,
       webPreferences: {
-        contextIsolation: false,
+        contextIsolation: true,
         nodeIntegration: false,
         preload: path.join(__dirname, 'preload.js'),
       },
@@ -58,7 +58,7 @@ if (!gotLock) {
       backgroundColor: '#ffffff',
       icon: resolveIcon(),
       webPreferences: {
-        contextIsolation: false,
+        contextIsolation: true,
         nodeIntegration: false,
         preload: path.join(__dirname, 'preload.js'),
       },
@@ -78,7 +78,7 @@ if (!gotLock) {
         height: 800,
         autoHideMenuBar: true,
         webPreferences: {
-          contextIsolation: false,
+          contextIsolation: true,
           nodeIntegration: false,
           preload: path.join(__dirname, 'preload.js'),
         },
