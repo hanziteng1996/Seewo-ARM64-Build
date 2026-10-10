@@ -56,28 +56,6 @@ if (!gotLock) {
     }
   });
 
-  function attachConsoleLog(wc) {
-    try {
-      const logDir = app.getPath('userData');
-      const logFile = path.join(logDir, 'console.log');
-      wc.on('console-message', (event, a, b, c, d) => {
-        try {
-          let level, message, line, sourceId;
-          if (a && typeof a === 'object') {
-            level = a.level; message = a.message; line = a.lineNumber; sourceId = a.sourceId;
-          } else {
-            level = a; message = b; line = c; sourceId = d;
-          }
-          const isWarnOrError = level === 2 || level === 3 || level === 'warning' || level === 'error';
-          if (isWarnOrError && message) {
-            if (!fs.existsSync(logDir)) fs.mkdirSync(logDir, { recursive: true });
-            fs.appendFileSync(logFile, `[${new Date().toISOString()}] [L${level}] ${message} @ ${sourceId}:${line}\n`);
-          }
-        } catch (e) {}
-      });
-    } catch (e) {}
-  }
-
   function resolveIcon() {
     const candidates = [
       path.join(__dirname, 'logo.ico'),
@@ -100,7 +78,6 @@ if (!gotLock) {
         preload: path.join(__dirname, 'preload.js'),
       },
     });
-    attachConsoleLog(win.webContents);
     win.loadURL(url);
     return win;
   }
@@ -118,7 +95,6 @@ if (!gotLock) {
       },
     });
 
-    attachConsoleLog(mainWindow.webContents);
     mainWindow.loadURL(TARGET_URL);
     mainWindow.on('closed', () => { mainWindow = null; });
 
@@ -156,11 +132,7 @@ if (!gotLock) {
 
   ipcMain.on('seewo:host', (event, { type, data }) => {
     const wc = event.sender;
-    try {
-      const logFile = path.join(app.getPath('userData'), 'console.log');
-      if (!fs.existsSync(app.getPath('userData'))) fs.mkdirSync(app.getPath('userData'), { recursive: true });
-      fs.appendFileSync(logFile, `[${new Date().toISOString()}] [IPC-host] ${type} ${JSON.stringify(data || '')}\n`);
-    } catch (e) {}
+    try { fs.appendFileSync(path.join(app.getPath('userData'), 'console.log'), `[${new Date().toISOString()}] [IPC-host] ${type} ${JSON.stringify(data || '')}\n`); } catch (e) {}
     switch (type) {
       case 'OPEN_SYSTEM_PRINTING_SETTING':
         wc.print();
@@ -228,11 +200,7 @@ if (!gotLock) {
   });
 
   ipcMain.handle('seewo:invoke-main', (event, { channel, data }) => {
-    try {
-      const logFile = path.join(app.getPath('userData'), 'console.log');
-      if (!fs.existsSync(app.getPath('userData'))) fs.mkdirSync(app.getPath('userData'), { recursive: true });
-      fs.appendFileSync(logFile, `[${new Date().toISOString()}] [IPC-invoke] ${channel} ${JSON.stringify(data || '')}\n`);
-    } catch (e) {}
+    try { fs.appendFileSync(path.join(app.getPath('userData'), 'console.log'), `[${new Date().toISOString()}] [IPC-invoke] ${channel} ${JSON.stringify(data || '')}\n`); } catch (e) {}
     switch (channel) {
       case 'openEditingExportDialog': {
         const filename = data || 'courseware';
@@ -340,11 +308,7 @@ if (!gotLock) {
   ipcMain.handle('seewo:get-login-info-by-uid', () => undefined);
 
   ipcMain.handle('seewo:ipc-request', (event, { channel, data }) => {
-    try {
-      const logFile = path.join(app.getPath('userData'), 'console.log');
-      if (!fs.existsSync(app.getPath('userData'))) fs.mkdirSync(app.getPath('userData'), { recursive: true });
-      fs.appendFileSync(logFile, `[${new Date().toISOString()}] [IPC-request] ${channel} ${JSON.stringify(data || '')}\n`);
-    } catch (e) {}
+    try { fs.appendFileSync(path.join(app.getPath('userData'), 'console.log'), `[${new Date().toISOString()}] [IPC-request] ${channel} ${JSON.stringify(data || '')}\n`); } catch (e) {}
     switch (channel) {
       case 'GetIsInDisplayBoardMode':
         return false;
