@@ -2,31 +2,6 @@ const { ipcRenderer } = require('electron');
 
 window.channel = 'electron';
 
-window.saveAs = async function(blob, filename) {
-  if (typeof blob === 'string') {
-    const a = document.createElement('a');
-    a.href = blob;
-    a.download = filename || 'download';
-    a.rel = 'noopener';
-    document.body.appendChild(a);
-    setTimeout(() => {
-      try { a.dispatchEvent(new MouseEvent('click')); }
-      catch (e) {
-        const ev = document.createEvent('MouseEvents');
-        ev.initMouseEvent('click', true, true, window, 0, 0, 0, 80, 20, false, false, false, false, 0, null);
-        a.dispatchEvent(ev);
-      }
-      document.body.removeChild(a);
-    }, 0);
-    return;
-  }
-  const arrayBuffer = await blob.arrayBuffer();
-  return ipcRenderer.invoke('seewo:save-blob', {
-    filename: filename || blob.name || 'download',
-    data: arrayBuffer,
-  });
-};
-
 const bridge = {
   sendToHost: (type, data) => ipcRenderer.send('seewo:host', { type, data }),
   sendToMain: (channel, data) => ipcRenderer.send('seewo:main', { channel, data }),
@@ -43,7 +18,7 @@ const bridge = {
   toggleFullScreen: (flag) => ipcRenderer.invoke('seewo:toggle-fullscreen', flag),
   showSystemKeyboard: () => {},
   hideSystemKeyboard: () => {},
-  writeFileToLocal: (filePath, content, isBinary) => ipcRenderer.invoke('seewo:write-file', filePath, content, isBinary),
+  writeFileToLocal: (data) => ipcRenderer.invoke('seewo:write-file', data),
   cancelCoursewareDownload: () => ipcRenderer.invoke('seewo:cancel-download'),
   getLogFile: () => '',
   getGlobalVariable: () => undefined,
@@ -62,8 +37,6 @@ const bridge = {
   closeEditingPage: () => {},
   closeEditingPages: () => {},
   reFreshCoursewareList: () => {},
-  startDisplay: () => {},
-  getActivationRemainDays: () => 999,
   api: {
     ipc: {
       request: (channel, data) => ipcRenderer.invoke('seewo:ipc-request', { channel, data }),

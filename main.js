@@ -4,6 +4,30 @@ const fs = require('fs');
 
 const TARGET_URL = 'https://enweb3.seewo.com/';
 
+// ===== 崩溃/错误日志（%APPDATA%\seewo-arm64\crash.log） =====
+try {
+  const logDir = app.getPath('userData');
+  const logFile = path.join(logDir, 'crash.log');
+  function logLine(msg) {
+    try {
+      if (!fs.existsSync(logDir)) fs.mkdirSync(logDir, { recursive: true });
+      fs.appendFileSync(logFile, `[${new Date().toISOString()}] ${msg}\n`);
+    } catch (e) {}
+  }
+  process.on('uncaughtException', (err) => {
+    logLine(`uncaughtException: ${err && err.stack ? err.stack : String(err)}`);
+  });
+  process.on('unhandledRejection', (reason) => {
+    logLine(`unhandledRejection: ${reason && reason.stack ? reason.stack : String(reason)}`);
+  });
+  app.on('render-process-gone', (event, wc, details) => {
+    logLine(`render-process-gone: ${JSON.stringify(details)}`);
+  });
+  app.on('child-process-gone', (event, details) => {
+    logLine(`child-process-gone: ${JSON.stringify(details)}`);
+  });
+} catch (e) {}
+
 const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) {
   app.quit();
@@ -73,6 +97,14 @@ if (!gotLock) {
 
     mainWindow.loadURL(TARGET_URL);
     mainWindow.on('closed', () => { mainWindow = null; });
+
+    mainWindow.webContents.on('did-fail-load', (event, code, desc, url) => {
+      try {
+        const logFile = path.join(app.getPath('userData'), 'crash.log');
+        if (!fs.existsSync(app.getPath('userData'))) fs.mkdirSync(app.getPath('userData'), { recursive: true });
+        fs.appendFileSync(logFile, `[${new Date().toISOString()}] did-fail-load: code=${code} desc=${desc} url=${url}\n`);
+      } catch (e) {}
+    });
 
     mainWindow.webContents.setWindowOpenHandler(() => ({
       action: 'allow',
@@ -154,10 +186,6 @@ if (!gotLock) {
       case 'UNAUTHORIZED':
       case 'updateTabTitle':
       case 'updateTeachingPlan':
-      case 'webview::click':
-      case 'editingStatus':
-      case 'goToHomePage':
-      case 'ACTIVATE':
         break;
       default:
         break;
@@ -165,25 +193,16 @@ if (!gotLock) {
   });
 
   ipcMain.on('seewo:main', (event, { channel, data }) => {
-    switch (channel) {
-      case 'updateSavePathMap':
-        if (data && data.savePath) {
-          setPendingExportPath(data.savePath);
-        }
-        break;
-      default:
-        for (const win of BrowserWindow.getAllWindows()) {
-          win.webContents.send('seewo:ipc-on:' + channel, data);
-        }
-        break;
+    for (const win of BrowserWindow.getAllWindows()) {
+      win.webContents.send('seewo:ipc-on:' + channel, data);
     }
   });
 
-  ipcMain.handle('seewo:invoke-main', async (event, { channel, data }) => {
+  ipcMain.handle('seewo:invoke-main', (event, { channel, data }) => {
     switch (channel) {
       case 'openEditingExportDialog': {
         const filename = data || 'courseware';
-        const { canceled, filePath } = await dialog.showSaveDialog(mainWindow, {
+        return dialog.showSaveDialog(mainWindow, {
           title: '导出课件',
           defaultPath: path.join(app.getPath('downloads'), filename),
           filters: [
@@ -192,33 +211,12 @@ if (!gotLock) {
             { name: 'PDF (.pdf)', extensions: ['pdf'] },
             { name: '图片 (.png)', extensions: ['png'] },
           ],
+        }).then(({ canceled, filePath }) => {
+          if (canceled || !filePath) return undefined;
+          setPendingExportPath(filePath);
+          return filePath;
         });
-        if (canceled || !filePath) return undefined;
-        setPendingExportPath(filePath);
-        return filePath;
       }
-      case 'saveBase64Img': {
-        if (!data || !data.savePath || !data.base64String) return false;
-        try {
-          const dir = path.dirname(data.savePath);
-          if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-          const buffer = Buffer.from(data.base64String, 'base64');
-          fs.writeFileSync(data.savePath, buffer);
-          return true;
-        } catch (e) {
-          console.error('saveBase64Img error:', e);
-          return false;
-        }
-      }
-      case 'GetIsInDisplayBoardMode':
-        return false;
-      case 'GetSystemInfo':
-        return { platform: 'win32', arch: 'arm64' };
-      case 'GetFontList':
-        return [];
-      case 'GetOpsInfo':
-      case 'GetSandboxInfo':
-        return {};
       default:
         return undefined;
     }
@@ -271,43 +269,27 @@ if (!gotLock) {
     }
   });
 
-  ipcMain.handle('seewo:write-file', (event, filePath, content, isBinary) => {
+  // 兼容两种调用签名：对象式 {path, content} 和多参数式 (path, content, isBinary)
+  ipcMain.handle('seewo:write-file', (event, a, b, c) => {
+    let filePath, content, isBinary;
+    if (a && typeof a === 'object' && !Buffer.isBuffer(a) && !(a instanceof ArrayBuffer) && ('path' in a)) {
+      filePath = a.path;
+      content = a.content;
+      isBinary = a.isBinary;
+    } else {
+      filePath = a;
+      content = b;
+      isBinary = c;
+    }
     if (!filePath) return false;
     try {
-      const dir = path.dirname(filePath);
-      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-      if (isBinary && content) {
-        const buffer = Buffer.isBuffer(content) ? content : Buffer.from(content);
-        fs.writeFileSync(filePath, buffer);
+      if (isBinary && content && content.byteLength !== undefined) {
+        fs.writeFileSync(filePath, Buffer.from(content));
       } else {
         fs.writeFileSync(filePath, content || '');
       }
       return true;
     } catch (e) {
-      console.error('write-file error:', e);
-      return false;
-    }
-  });
-
-  ipcMain.handle('seewo:save-blob', async (event, { filename, data }) => {
-    let filePath = getAndClearPendingExportPath();
-    if (!filePath) {
-      const { canceled, filePath: selectedPath } = await dialog.showSaveDialog(mainWindow, {
-        title: '保存文件',
-        defaultPath: path.join(app.getPath('downloads'), filename),
-      });
-      if (canceled || !selectedPath) return false;
-      filePath = selectedPath;
-    }
-    try {
-      const dir = path.dirname(filePath);
-      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-      const buffer = Buffer.isBuffer(data) ? data : Buffer.from(data);
-      fs.writeFileSync(filePath, buffer);
-      shell.showItemInFolder(filePath);
-      return true;
-    } catch (e) {
-      console.error('save-blob error:', e);
       return false;
     }
   });
@@ -323,12 +305,27 @@ if (!gotLock) {
   ipcMain.handle('seewo:get-login-info', () => undefined);
   ipcMain.handle('seewo:get-login-info-by-uid', () => undefined);
 
+  ipcMain.handle('seewo:ipc-request', (event, { channel, data }) => {
+    switch (channel) {
+      case 'GetIsInDisplayBoardMode':
+        return false;
+      case 'GetSystemInfo':
+        return { platform: 'win32', arch: 'arm64' };
+      case 'GetFontList':
+        return [];
+      case 'GetOpsInfo':
+      case 'GetSandboxInfo':
+        return {};
+      default:
+        return undefined;
+    }
+  });
+
   ipcMain.on('seewo:ipc-send', () => {});
 
-  // ===== 下载处理（非 blob 下载的 fallback） =====
+  // ===== 下载处理 =====
   app.whenReady().then(() => {
     session.defaultSession.on('will-download', (event, item) => {
-      const filename = item.getFilename();
       const pendingPath = getAndClearPendingExportPath();
       if (pendingPath) {
         item.setSavePath(pendingPath);
@@ -339,6 +336,7 @@ if (!gotLock) {
         });
         return;
       }
+      const filename = item.getFilename();
       const defaultPath = path.join(app.getPath('downloads'), filename);
       dialog.showSaveDialog(mainWindow, {
         title: '保存下载',
